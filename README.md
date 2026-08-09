@@ -125,19 +125,56 @@ names, roles, and emails. Drop photos into `/public/team/` (square,
 Leave `photo: ""` for anyone whose photo you don't have yet — they'll get
 a placeholder initials avatar instead of a broken image.
 
-## 8. Editing the design
+## 8. Real rate limiting + captcha (Cloudflare Turnstile)
+
+Registration and the queries form now go through server routes
+(`pages/api/register.js`, `pages/api/query.js`) that enforce two things
+before anything gets saved:
+
+- **Rate limiting** — max 5 registrations and 10 questions per hour per
+  IP address, tracked in a `rate_limit_hits` table in your database. No
+  extra service needed for this part.
+- **A real captcha** — [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/),
+  free, no card required, and far harder for a bot to solve than the old
+  math-sum check.
+
+**Setup (~5 minutes):**
+
+1. Go to [dash.cloudflare.com](https://dash.cloudflare.com) → sign up free
+   → **Turnstile** in the left sidebar → **Add site**.
+2. Enter your domain (or `localhost` while testing locally — Turnstile
+   supports that as a hostname).
+3. Copy the **Site Key** and **Secret Key** it gives you.
+4. Add to `.env.local` (and Vercel's Environment Variables):
+   - `NEXT_PUBLIC_TURNSTILE_SITE_KEY`
+   - `TURNSTILE_SECRET_KEY`
+5. Redeploy.
+
+**Important — run this database migration too**, even if you already ran
+`schema.sql` before: open `supabase/migration_2_rate_limiting.sql` in the
+Supabase SQL Editor and run it. It adds the rate-limit table *and* removes
+two old policies that let the browser insert data directly — without this
+step, someone could bypass the new rate limit and captcha entirely by
+calling Supabase directly with the public anon key. The file explains why
+in its comments.
+
+Until you set the Turnstile keys, both forms will show a small notice and
+run without spam protection (rate limiting still applies either way) — fine
+for local development, but set the real keys before students start using
+the live site.
+
+## 9. Editing the design
 
 - Colors/fonts: `tailwind.config.js`
 - Event name/date shown on the homepage: environment variables (no code
   change needed) — see `.env.example`
 - Everything else is plain React in `pages/` and `components/`.
 
-## 9. Honest limitations
+## 10. Honest limitations
 
-- No rate-limiting beyond a simple math CAPTCHA on public forms — fine
-  for an internal audience, not bot-proof against a determined attacker.
-- No email notifications built in (e.g. confirming a registration) —
-  can be added later via a Supabase Edge Function + email provider if
-  you want it.
+- Rate limiting is IP-based; a determined attacker behind many IPs (or a
+  campus NAT with many legitimate students behind one IP) isn't perfectly
+  handled — fine for a college-internal audience, not bulletproof.
+- No email notifications for anything except registration confirmations.
 - This is v1 of a real product, not a hardened enterprise system. Good
   enough for a college internal round; say so plainly if anyone asks.
