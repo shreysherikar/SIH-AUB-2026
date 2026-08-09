@@ -1,8 +1,9 @@
 import Head from "next/head";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Nav from "@/components/Nav";
 import Footer from "@/components/Footer";
 import { supabase, isSupabaseConfigured } from "@/lib/supabaseClient";
+import Turnstile from "@/components/Turnstile";
 
 const emptyTeam = {
   team_name: "",
@@ -39,11 +40,7 @@ export default function Register() {
   const [errorMsg, setErrorMsg] = useState("");
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [regOpen, setRegOpen] = useState(true);
-  const [captchaInput, setCaptchaInput] = useState("");
-  const captcha = useMemo(
-    () => ({ a: 2 + Math.floor(Math.random() * 7), b: 1 + Math.floor(Math.random() * 7) }),
-    []
-  );
+  const [turnstileToken, setTurnstileToken] = useState("");
 
   useEffect(() => {
     async function loadSettings() {
@@ -64,10 +61,6 @@ export default function Register() {
 
   async function submit(e) {
     e.preventDefault();
-    if (captchaInput.trim() !== String(captcha.a + captcha.b)) {
-      setStatus("captcha");
-      return;
-    }
     setStatus("sending");
     setErrorMsg("");
 
@@ -75,7 +68,7 @@ export default function Register() {
       const res = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, turnstileToken }),
       });
       const result = await res.json();
 
@@ -87,6 +80,7 @@ export default function Register() {
 
       setStatus(result.emailSent ? "sent" : "sent_no_email");
       setForm(emptyTeam);
+      setTurnstileToken("");
     } catch (err) {
       setStatus("error");
       setErrorMsg("Couldn't reach the server, try again in a bit.");
@@ -98,7 +92,7 @@ export default function Register() {
       <Head>
         <title>Register — SIH Internal Portal</title>
       </Head>
-      <div className="min-h-screen bg-cream bg-grid bg-fixed">
+      <div className="min-h-screen bg-base bg-grid bg-fixed">
         <Nav />
         <main className="max-w-2xl mx-auto px-4 sm:px-6 py-16">
           <div className="font-mono text-xs text-cyan tracking-widest uppercase mb-3">
@@ -234,18 +228,7 @@ export default function Register() {
                 </Field>
               </div>
 
-              <div className="flex items-center gap-3">
-                <label className="font-mono text-xs text-inkDim shrink-0">
-                  quick check: {captcha.a} + {captcha.b} =
-                </label>
-                <input
-                  type="number"
-                  value={captchaInput}
-                  onChange={(e) => setCaptchaInput(e.target.value)}
-                  required
-                  className="w-20 bg-panelLight border border-line rounded px-3 py-1.5 text-sm text-ink focus:border-amber outline-none"
-                />
-              </div>
+              <Turnstile onToken={setTurnstileToken} />
 
               <button
                 type="submit"
@@ -255,9 +238,6 @@ export default function Register() {
                 {status === "sending" ? "submitting…" : "submit registration"}
               </button>
 
-              {status === "captcha" && (
-                <p className="text-bad text-xs font-mono">that sum's off — try again</p>
-              )}
               {status === "error" && (
                 <p className="text-bad text-xs font-mono">{errorMsg}</p>
               )}
@@ -269,5 +249,3 @@ export default function Register() {
     </>
   );
 }
-
-

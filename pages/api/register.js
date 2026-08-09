@@ -1,4 +1,6 @@
 import { supabaseAdmin, isAdminConfigured } from "@/lib/supabaseAdmin";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
+import { verifyTurnstile } from "@/lib/turnstile";
 
 const EVENT_NAME = process.env.NEXT_PUBLIC_EVENT_NAME || "Internal Smart India Hackathon";
 
@@ -100,6 +102,27 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Server is not configured (missing Supabase service role key)." });
   }
 
+  const ip = getClientIp(req);
+
+  // Rate limit first -- cheapest check, and stops abuse before it touches
+  // the captcha service or the database at all.
+  const { allowed } = await checkRateLimit({
+    scope: "register",
+    identifier: ip,
+    limit: 5,
+    windowMinutes: 60,
+  });
+  if (!allowed) {
+    return res.status(429).json({
+      error: "Too many registration attempts from this connection. Please wait a while and try again, or contact an organizer.",
+    });
+  }
+
+  const turnstileResult = await verifyTurnstile(req.body?.turnstileToken, ip);
+  if (turnstileResult.configured && !turnstileResult.success) {
+    return res.status(400).json({ error: "Captcha check failed — please retry the challenge and submit again." });
+  }
+
   const team = pick(req.body || {});
 
   if (!team.team_name || !team.leader_name || !team.leader_email) {
@@ -158,5 +181,3 @@ export default async function handler(req, res) {
 
   return res.status(200).json({ ok: true, emailSent });
 }
-
-

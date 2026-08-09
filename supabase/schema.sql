@@ -53,14 +53,9 @@ create policy "queries_public_read"
   on queries for select
   using (true);
 
--- Anyone can POST a question, but cannot set an answer themselves
--- (answer/answered_at are only ever set via the organizer update policy below)
-create policy "queries_public_ask"
-  on queries for insert
-  to anon, authenticated
-  with check (answer is null and answered_at is null);
-
--- Only organizers can edit a query (i.e. answer it) or delete spam
+-- Question posting happens via pages/api/query.js using the service role
+-- key, which bypasses RLS -- so there is deliberately NO public insert
+-- policy here either, for the same reason as the teams table above.
 create policy "queries_organizer_answer"
   on queries for update
   to authenticated
@@ -97,13 +92,12 @@ alter table teams enable row level security;
 -- That means students can submit a registration but CANNOT read the list
 -- back -- not their own row, not anyone else's -- via the public API.
 
--- Anyone can submit a registration (the public registration form uses this)
-create policy "teams_public_register"
-  on teams for insert
-  to anon, authenticated
-  with check (true);
-
--- Only logged-in organizers can view the full list (used by /admin)
+-- Registration happens via pages/api/register.js using the service role
+-- key, which bypasses RLS -- so there is deliberately NO public insert
+-- policy here. This is what forces every submission through the server
+-- route, where rate limiting + captcha verification actually happen.
+-- (See supabase/migration_2_rate_limiting.sql for the reasoning if you're
+-- reading this after that migration already ran.)
 create policy "teams_organizer_read"
   on teams for select
   to authenticated
@@ -141,6 +135,23 @@ create policy "settings_organizer_update"
   on settings for update
   to authenticated
   using (true);
+
+
+-- ---------- RATE LIMIT LOG ------------------------------------------------
+-- Backs the sliding-window rate limiter in lib/rateLimit.js. Only the
+-- server (using the service role key) ever touches this table -- no
+-- policies are added on purpose, so it's default-deny for anon/authenticated.
+create table if not exists rate_limit_hits (
+  id uuid primary key default gen_random_uuid(),
+  scope text not null,
+  identifier text not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists rate_limit_hits_lookup
+  on rate_limit_hits (scope, identifier, created_at);
+
+alter table rate_limit_hits enable row level security;
 
 -- ============================================================================
 -- NEXT STEPS (do these in the Supabase dashboard, not in SQL):
