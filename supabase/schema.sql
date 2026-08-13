@@ -73,14 +73,10 @@ create table if not exists teams (
   team_name text not null unique,
   track text,
   problem_statement text,
-  leader_name text not null,
-  leader_email text not null,
-  leader_phone text,
-  member_2 text,
-  member_3 text,
-  member_4 text,
-  member_5 text,
-  member_6 text,
+  mentor_name text,
+  contact_name text not null,
+  contact_email text not null,
+  contact_phone text,
   notes text,
   created_at timestamptz default now()
 );
@@ -110,6 +106,42 @@ create policy "teams_organizer_update"
 
 create policy "teams_organizer_delete"
   on teams for delete
+  to authenticated
+  using (true);
+
+
+-- ---------- TEAM MEMBERS (per-member details, up to 6 per team) ---------
+create table if not exists team_members (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references teams(id) on delete cascade,
+  member_order smallint not null,
+  name text not null,
+  sen text not null,
+  year text not null,
+  program text not null,
+  school text not null,
+  gender text not null check (gender in ('Female', 'Male', 'Other')),
+  created_at timestamptz default now(),
+  unique (team_id, member_order)
+);
+
+alter table team_members enable row level security;
+
+-- Same pattern as teams: no public insert policy. All writes go through
+-- pages/api/register.js using the service role key, which is what lets the
+-- "at least one female member" rule be enforced server-side.
+create policy "team_members_organizer_read"
+  on team_members for select
+  to authenticated
+  using (true);
+
+create policy "team_members_organizer_update"
+  on team_members for update
+  to authenticated
+  using (true);
+
+create policy "team_members_organizer_delete"
+  on team_members for delete
   to authenticated
   using (true);
 

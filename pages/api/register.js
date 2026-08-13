@@ -3,31 +3,47 @@ import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 import { verifyTurnstile } from "@/lib/turnstile";
 
 const EVENT_NAME = process.env.NEXT_PUBLIC_EVENT_NAME || "Internal Smart India Hackathon";
+const VALID_GENDERS = ["Female", "Male", "Other"];
+const MEMBER_FIELDS = ["name", "sen", "year", "program", "school", "gender"];
 
-// Fields we accept from the form. Keeping an explicit allow-list here means
-// the API can never be used to write arbitrary columns, even if someone
-// crafts their own request instead of using the form.
-const ALLOWED_FIELDS = [
+// Team-level fields we accept from the form. Explicit allow-list so the API
+// can never be used to write arbitrary columns.
+const TEAM_FIELDS = [
   "team_name",
   "track",
   "problem_statement",
-  "leader_name",
-  "leader_email",
-  "leader_phone",
-  "member_2",
-  "member_3",
-  "member_4",
-  "member_5",
-  "member_6",
+  "mentor_name",
+  "contact_name",
+  "contact_email",
+  "contact_phone",
   "notes",
 ];
 
-function pick(body) {
+function pickTeam(body) {
   const out = {};
-  for (const key of ALLOWED_FIELDS) {
+  for (const key of TEAM_FIELDS) {
     if (typeof body[key] === "string") out[key] = body[key].trim();
   }
   return out;
+}
+
+// Takes the raw members array from the request and returns only the rows
+// that actually have something filled in, trimmed and field-limited.
+// A "blank" member (all fields empty) is silently dropped rather than
+// rejected -- that's just an unused slot in the form.
+function pickMembers(rawMembers) {
+  if (!Array.isArray(rawMembers)) return [];
+
+  return rawMembers
+    .map((m) => {
+      const out = {};
+      for (const key of MEMBER_FIELDS) {
+        out[key] = typeof m?.[key] === "string" ? m[key].trim() : "";
+      }
+      return out;
+    })
+    .filter((m) => Object.values(m).some((v) => v.length > 0))
+    .slice(0, 6);
 }
 
 function escapeHtml(str = "") {
@@ -37,19 +53,18 @@ function escapeHtml(str = "") {
     .replace(/>/g, "&gt;");
 }
 
-function buildEmailHtml(team) {
-  const members = [team.member_2, team.member_3, team.member_4, team.member_5, team.member_6].filter(Boolean);
-
-  const rows = [
+function buildEmailHtml(team, members) {
+  const teamRows = [
     ["Team name", team.team_name],
     ["Track", team.track || "—"],
     ["Problem statement", team.problem_statement || "—"],
-    ["Team leader", team.leader_name],
-    ["Leader email", team.leader_email],
-    ["Leader phone", team.leader_phone || "—"],
+    ["Mentor", team.mentor_name || "—"],
+    ["Point of contact", team.contact_name],
+    ["Contact email", team.contact_email],
+    ["Contact phone", team.contact_phone || "—"],
   ];
 
-  const rowsHtml = rows
+  const teamRowsHtml = teamRows
     .map(
       ([label, value]) => `
       <tr>
@@ -59,30 +74,48 @@ function buildEmailHtml(team) {
     )
     .join("");
 
-  const membersHtml = members.length
-    ? `<ul style="margin:8px 0 0;padding-left:18px;color:#152238;font-size:13px;">${members
-        .map((m) => `<li>${escapeHtml(m)}</li>`)
-        .join("")}</ul>`
-    : `<p style="margin:8px 0 0;color:#5B6478;font-size:13px;">No additional members listed.</p>`;
+  const memberRowsHtml = members
+    .map(
+      (m, i) => `
+      <tr>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${i + 1}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.name)}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.sen)}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.year)}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.program)}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.school)}</td>
+        <td style="padding:6px 10px;color:#152238;font-size:12px;border-bottom:1px solid #E4D9BB;">${escapeHtml(m.gender)}</td>
+      </tr>`
+    )
+    .join("");
 
   return `
   <div style="font-family:Arial,Helvetica,sans-serif;background:#FAF7F0;padding:32px;">
-    <div style="max-width:520px;margin:0 auto;background:#FFFFFF;border:1px solid #E4D9BB;border-radius:8px;overflow:hidden;">
+    <div style="max-width:600px;margin:0 auto;background:#FFFFFF;border:1px solid #E4D9BB;border-radius:8px;overflow:hidden;">
       <div style="background:#0B1F3D;padding:20px 24px;">
         <div style="color:#C9971C;font-size:12px;letter-spacing:1px;text-transform:uppercase;">Amity University Bengaluru</div>
         <div style="color:#ffffff;font-size:18px;font-weight:600;margin-top:4px;">${escapeHtml(EVENT_NAME)}</div>
       </div>
       <div style="padding:24px;">
         <p style="color:#152238;font-size:14px;margin-top:0;">
-          Hi ${escapeHtml(team.leader_name)}, your team's registration has been received. Here's what we have on file:
+          Hi ${escapeHtml(team.contact_name)}, your team's registration has been received. Here's what we have on file:
         </p>
         <table style="width:100%;border-collapse:collapse;margin-top:12px;">
-          ${rowsHtml}
+          ${teamRowsHtml}
         </table>
-        <div style="margin-top:16px;">
-          <div style="color:#5B6478;font-size:13px;">Other members</div>
-          ${membersHtml}
-        </div>
+        <div style="margin-top:20px;color:#5B6478;font-size:13px;">Members</div>
+        <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+          <tr>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">#</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">Name</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">SEN</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">Year</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">Program</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">School</th>
+            <th style="text-align:left;padding:6px 10px;color:#5B6478;font-size:11px;text-transform:uppercase;">Gender</th>
+          </tr>
+          ${memberRowsHtml}
+        </table>
         <p style="color:#5B6478;font-size:12px;margin-top:24px;">
           If any of this looks wrong, reply to this email or post it on the
           Queries page and an organizer will help. Watch the Announcements
@@ -104,8 +137,6 @@ export default async function handler(req, res) {
 
   const ip = getClientIp(req);
 
-  // Rate limit first -- cheapest check, and stops abuse before it touches
-  // the captcha service or the database at all.
   const { allowed } = await checkRateLimit({
     scope: "register",
     identifier: ip,
@@ -123,10 +154,31 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Captcha check failed — please retry the challenge and submit again." });
   }
 
-  const team = pick(req.body || {});
+  const team = pickTeam(req.body || {});
+  const members = pickMembers(req.body?.members);
 
-  if (!team.team_name || !team.leader_name || !team.leader_email) {
-    return res.status(400).json({ error: "Team name, leader name, and leader email are required." });
+  if (!team.team_name || !team.contact_name || !team.contact_email) {
+    return res.status(400).json({ error: "Team name, point of contact name, and contact email are required." });
+  }
+
+  if (members.length === 0) {
+    return res.status(400).json({ error: "Add at least one team member." });
+  }
+
+  for (const [i, m] of members.entries()) {
+    const missing = MEMBER_FIELDS.filter((f) => !m[f]);
+    if (missing.length > 0) {
+      return res.status(400).json({
+        error: `Member ${i + 1} is missing: ${missing.join(", ")}. Fill every field for any member row you use, or leave the whole row blank.`,
+      });
+    }
+    if (!VALID_GENDERS.includes(m.gender)) {
+      return res.status(400).json({ error: `Member ${i + 1} has an invalid gender value.` });
+    }
+  }
+
+  if (!members.some((m) => m.gender === "Female")) {
+    return res.status(400).json({ error: "At least one team member must be female." });
   }
 
   // Check registrations are open before writing anything.
@@ -140,17 +192,31 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: "Registrations are currently closed." });
   }
 
-  const { error: insertError } = await supabaseAdmin.from("teams").insert(team);
+  const { data: insertedTeam, error: teamError } = await supabaseAdmin
+    .from("teams")
+    .insert(team)
+    .select("id")
+    .single();
 
-  if (insertError) {
-    const message = insertError.message.includes("duplicate")
+  if (teamError) {
+    const message = teamError.message.includes("duplicate")
       ? "A team with that name already exists — pick a different team name."
-      : insertError.message;
+      : teamError.message;
     return res.status(400).json({ error: message });
   }
 
+  const memberRows = members.map((m, i) => ({ team_id: insertedTeam.id, member_order: i + 1, ...m }));
+  const { error: membersError } = await supabaseAdmin.from("team_members").insert(memberRows);
+
+  if (membersError) {
+    // Roll back the team row so we don't leave an orphaned team with no
+    // members behind -- better to fail the whole registration cleanly than
+    // to save half of it.
+    await supabaseAdmin.from("teams").delete().eq("id", insertedTeam.id);
+    return res.status(400).json({ error: `Could not save team members: ${membersError.message}` });
+  }
+
   // Email is best-effort: if it fails, the registration is still saved.
-  // We tell the caller either way so the UI can be honest about it.
   let emailSent = false;
   const resendKey = process.env.RESEND_API_KEY;
   const fromAddress = process.env.RESEND_FROM_EMAIL;
@@ -165,9 +231,9 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           from: fromAddress,
-          to: team.leader_email,
+          to: team.contact_email,
           subject: `Registration received — ${team.team_name}`,
-          html: buildEmailHtml(team),
+          html: buildEmailHtml(team, members),
         }),
       });
       emailSent = emailRes.ok;
